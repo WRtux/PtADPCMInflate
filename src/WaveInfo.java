@@ -4,7 +4,8 @@ public final class WaveInfo {
 	public static final String HEADER_TYPE = "WAVE";
 
 	public static enum Coding {
-		PCM((short) 0x0001), PTADPCM((short) 0x8311);
+		PCM((short) 0x0001), MSADPCM((short) 0x0002), PTADPCM((short) 0x8311),
+		VORBIS((short) 0x6771), WWVORBIS((short) 0xFFFF);
 
 		public static Coding get(short id) {
 			for (Coding code : Coding.values()) {
@@ -53,7 +54,14 @@ public final class WaveInfo {
 	}
 
 	public int getFrameCount() {
-		return Math.floorDiv(this.sampleCount - 1, this.frameSampleCount) + 1;
+		switch (this.coding) {
+		case PCM:
+		case MSADPCM:
+		case PTADPCM:
+			return Math.floorDiv(this.sampleCount - 1, this.frameSampleCount) + 1;
+		default:
+			throw new UnsupportedOperationException();
+		}
 	}
 
 	public double getLength() {
@@ -70,6 +78,14 @@ public final class WaveInfo {
 		switch (this.coding) {
 		case PCM:
 			return this.channelCount * this.frameSampleCount * this.getSampleSize();
+		case MSADPCM:
+			if (this.channelCount > 2)
+				throw new IllegalArgumentException("Too many channels.");
+			if (this.sampleDepth != 4 && this.sampleDepth != 16)
+				throw new IllegalArgumentException("Invalid sample depth.");
+			if (this.frameSampleCount <= 2)
+				throw new IllegalArgumentException("Frame sample count too small.");
+			return this.channelCount * 7 + (this.channelCount * (this.frameSampleCount - 2) + 1) / 2;
 		case PTADPCM:
 			if (this.sampleDepth != 4 && this.sampleDepth != 16)
 				throw new IllegalArgumentException("Invalid sample depth.");
@@ -77,7 +93,7 @@ public final class WaveInfo {
 				throw new IllegalArgumentException("Frame sample count too small.");
 			return this.channelCount * (5 + (this.frameSampleCount - 2 + 1) / 2);
 		default:
-			throw new IllegalStateException();
+			throw new UnsupportedOperationException();
 		}
 	}
 
@@ -85,10 +101,11 @@ public final class WaveInfo {
 		switch (this.coding) {
 		case PCM:
 			return this.channelCount * this.sampleCount * this.getSampleSize();
+		case MSADPCM:
 		case PTADPCM:
 			return this.getFrameCount() * this.getFrameSize();
 		default:
-			throw new IllegalStateException();
+			throw new UnsupportedOperationException();
 		}
 	}
 
