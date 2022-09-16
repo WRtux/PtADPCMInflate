@@ -88,7 +88,7 @@ public final class Inflator {
 		) {
 			if (lck == null)
 				throw new AccessDeniedException("File already in use.");
-			System.out.println("Processing header...");
+			System.err.println("Processing header...");
 			int pos = 0;
 			{
 				String tag = IOHelper.readString(din, "ISO-8859-1", 4);
@@ -110,7 +110,7 @@ L:			while (true) {
 					if (!(s == 16 || s >= 18))
 						throw new ApplicationException(-2, "Invalid header size: " + s);
 					ininf = new WaveInfo();
-					ininf.coding = WaveInfo.Coding.get(IOHelper.readShort(din));
+					ininf.encoding = WaveInfo.Encoding.get(IOHelper.readShort(din));
 					ininf.channelCount = IOHelper.readShortU(din);
 					ininf.sampleRate = IOHelper.readInt(din);
 					IOHelper.readInt(din);
@@ -121,8 +121,8 @@ L:			while (true) {
 							System.err.println("Warning: Extended header size may be incorrect.");
 						IOHelper.readBytes(din, s - 18);
 					}
-					if (ininf.coding != WaveInfo.Coding.PTADPCM)
-						throw new ApplicationException(1, "Unexpected coding: " + ininf.coding.name());
+					if (ininf.encoding != WaveInfo.Encoding.PTADPCM)
+						throw new ApplicationException(1, "Unexpected encoding: " + ininf.encoding.name);
 					if (ininf.sampleDepth != 4 && ininf.sampleDepth != 16)
 						throw new ApplicationException(-2, "Invalid sample depth: " + ininf.sampleDepth);
 					if (fs % ininf.channelCount != 0 || fs / ininf.channelCount <= 5)
@@ -137,7 +137,8 @@ L:			while (true) {
 					pos += 8;
 					break L;
 				default:
-					System.err.println("Unrecognized tag: " + tag);
+					System.err.println("Warning: Unrecognized tag: " + tag);
+				case "JUNK":
 					if (din.skipBytes(s) != s)
 						throw new EOFException();
 				}
@@ -153,7 +154,7 @@ L:			while (true) {
 				IOHelper.writeString(dout, WaveInfo.HEADER_TYPE, "ISO-8859-1");
 				IOHelper.writeString(dout, "fmt ", "ISO-8859-1");
 				IOHelper.writeInt(dout, 16);
-				IOHelper.writeShort(dout, outinf.coding.ID);
+				IOHelper.writeShort(dout, outinf.encoding.ID);
 				IOHelper.writeShort(dout, outinf.channelCount);
 				IOHelper.writeInt(dout, outinf.sampleRate);
 				IOHelper.writeInt(dout, outinf.getByteRate());
@@ -162,9 +163,9 @@ L:			while (true) {
 				IOHelper.writeString(dout, "data", "ISO-8859-1");
 				IOHelper.writeInt(dout, s);
 			}
-			System.out.println("Decoding data...");
+			System.err.println("Decoding data...");
 			PtADPCMInflator.processData(ininf, din, dout);
-			System.out.println("Process complete.");
+			System.err.println("Process complete.");
 		} catch (FileNotFoundException ex) {
 			throw new ApplicationException(2, "File does not exist.");
 		}

@@ -3,28 +3,35 @@ public final class WaveInfo {
 	public static final String HEADER_MAGIC = "RIFF";
 	public static final String HEADER_TYPE = "WAVE";
 
-	public static enum Coding {
-		PCM((short) 0x0001), MSADPCM((short) 0x0002), PTADPCM((short) 0x8311),
-		VORBIS((short) 0x6771), WWVORBIS((short) 0xFFFF);
+	public static enum Encoding {
+		PCM((short) 0x0001), MSADPCM((short) 0x0002, "Microsoft ADPCM"), PTADPCM((short) 0x8311, "Platinum ADPCM"),
+		VORBIS((short) 0x6771, "Vorbis"), WWVORBIS((short) 0xFFFF, "Wwise Vorbis");
 
-		public static Coding get(short id) {
-			for (Coding code : Coding.values()) {
+		public static Encoding get(short id) {
+			for (Encoding code : Encoding.values()) {
 				if (id == code.ID)
 					return code;
 			}
-			throw new IllegalArgumentException(String.format("Unsupported audio coding: %04X",
+			throw new IllegalArgumentException(String.format("Unsupported audio encoding: %04X",
 				Short.toUnsignedInt(id)));
 		}
 
 		public final short ID;
 
-		private Coding(short id) {
+		public final String name;
+
+		private Encoding(short id, String n) {
 			this.ID = id;
+			this.name = n;
+		}
+		private Encoding(short id) {
+			this.ID = id;
+			this.name = this.name();
 		}
 
 	}
 
-	public Coding coding;
+	public Encoding encoding;
 
 	public int channelCount;
 
@@ -38,11 +45,11 @@ public final class WaveInfo {
 
 	public WaveInfo() {}
 
-	public WaveInfo(Coding code) {
-		this.coding = code;
+	public WaveInfo(Encoding code) {
+		this.encoding = code;
 	}
 
-	public WaveInfo(Coding code, int chcnt, int sr, int sd, int fscnt) {
+	public WaveInfo(Encoding code, int chcnt, int sr, int sd, int fscnt) {
 		this(code);
 		this.channelCount = chcnt;
 		this.sampleRate = sr;
@@ -50,11 +57,11 @@ public final class WaveInfo {
 		this.frameSampleCount = fscnt;
 	}
 	public WaveInfo(int chcnt, int sr, int sd) {
-		this(Coding.PCM, chcnt, sr, sd, 1);
+		this(Encoding.PCM, chcnt, sr, sd, 1);
 	}
 
 	public int getFrameCount() {
-		switch (this.coding) {
+		switch (this.encoding) {
 		case PCM:
 		case MSADPCM:
 		case PTADPCM:
@@ -69,13 +76,13 @@ public final class WaveInfo {
 	}
 
 	int getSampleSize() {
-		if (this.coding != Coding.PCM)
+		if (this.encoding != Encoding.PCM)
 			throw new IllegalStateException();
 		return Math.floorDiv(this.sampleDepth - 1, 8) + 1;
 	}
 
 	public int getFrameSize() {
-		switch (this.coding) {
+		switch (this.encoding) {
 		case PCM:
 			return this.channelCount * this.frameSampleCount * this.getSampleSize();
 		case MSADPCM:
@@ -98,7 +105,7 @@ public final class WaveInfo {
 	}
 
 	public int getDataSize() {
-		switch (this.coding) {
+		switch (this.encoding) {
 		case PCM:
 			return this.channelCount * this.sampleCount * this.getSampleSize();
 		case MSADPCM:
