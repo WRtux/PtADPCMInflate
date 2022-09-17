@@ -17,7 +17,7 @@ import java.nio.file.AccessDeniedException;
 
 public final class Inflator {
 
-	static final class PtADPCMInflator {
+	static final class PtADPCMDecoder {
 
 		static final int INDEX_COUNT = 12;
 
@@ -40,7 +40,7 @@ public final class Inflator {
 			}
 		}
 
-		static final void processData(WaveInfo ininf, DataInput din, DataOutput dout) throws IOException {
+		static final void decodeData(WaveInfo ininf, DataInput din, DataOutput dout) throws IOException {
 			int fcnt = ininf.getFrameCount(), fs = ininf.getFrameSize() / ininf.channelCount;
 			boolean f = false;
 			for (int i = 0; i < fcnt; i++) {
@@ -69,10 +69,87 @@ public final class Inflator {
 		}
 
 		@Deprecated
-		private PtADPCMInflator() {
+		private PtADPCMDecoder() {
 			throw new IllegalStateException();
 		}
 
+	}
+
+	static WaveInfo prepareInputInfo(DataInput din, int lim) throws ApplicationException, IOException {
+		int pos = 0;
+		{
+			String tag = IOHelper.readString(din, "ISO-8859-1", 4);
+			if (!tag.equals(WaveInfo.HEADER_MAGIC))
+				throw new ApplicationException(-2, "Unrecognized file header: " + tag);
+			if (8 + IOHelper.readInt(din) != lim)
+				System.err.println("Warning: File size may be incorrect.");
+			tag = IOHelper.readString(din, "ISO-8859-1", 4);
+			if (!tag.equals(WaveInfo.HEADER_TYPE))
+				throw new ApplicationException(-2, "Unrecognized file type: " + tag);
+			pos += 12;
+		}
+		WaveInfo inf = null;
+		while (true) {
+			String tag = IOHelper.readString(din, "ISO-8859-1", 4);
+			int s = IOHelper.readInt(din);
+			switch (tag) {
+			case "fmt ": {
+				if (!(s == 16 || s >= 18))
+					throw new ApplicationException(-2, "Invalid header size: " + s);
+				inf = new WaveInfo();
+				inf.encoding = WaveInfo.Encoding.get(IOHelper.readShort(din));
+				inf.channelCount = IOHelper.readShortU(din);
+				inf.sampleRate = IOHelper.readInt(din);
+				IOHelper.readInt(din);
+				int fs = IOHelper.readShortU(din);
+				inf.sampleDepth = IOHelper.readShortU(din);
+				if (s >= 18) {
+					if (IOHelper.readShortU(din) != s - 18)
+						System.err.println("Warning: Extended header size may be incorrect.");
+					IOHelper.readBytes(din, s - 18);
+				}
+				if (inf.encoding != WaveInfo.Encoding.PTADPCM)
+					throw new ApplicationException(1, "Unexpected encoding: " + inf.encoding.name);
+				if (inf.sampleDepth != 4 && inf.sampleDepth != 16)
+					throw new ApplicationException(-2, "Invalid sample depth: " + inf.sampleDepth);
+				if (fs % inf.channelCount != 0 || fs / inf.channelCount <= 5)
+					throw new ApplicationException(-2, "Invalid frame size: " + fs);
+				inf.frameSampleCount = 2 + (fs / inf.channelCount - 5) * 2;
+				break;
+			}
+			case "data":
+				if (8 + s != lim - pos)
+					System.err.println("Warning: Data size may be incorrect.");
+				inf.setDataSize(s);
+				return inf;
+			default:
+				System.err.println("Warning: Unrecognized tag: " + tag);
+			case "JUNK":
+				if (din.skipBytes(s) != s)
+					throw new EOFException();
+			}
+			pos += 8 + s;
+		}
+	}
+
+	static WaveInfo prepareOutputInfo(DataOutput dout, WaveInfo ininf) throws ApplicationException, IOException {
+		WaveInfo outinf = new WaveInfo(ininf.channelCount, ininf.sampleRate, 16);
+		outinf.sampleCount = ininf.sampleCount;
+		int s = outinf.getDataSize();
+		IOHelper.writeString(dout, WaveInfo.HEADER_MAGIC, "ISO-8859-1");
+		IOHelper.writeInt(dout, 4 + (8 + 16) + 8 + s);
+		IOHelper.writeString(dout, WaveInfo.HEADER_TYPE, "ISO-8859-1");
+		IOHelper.writeString(dout, "fmt ", "ISO-8859-1");
+		IOHelper.writeInt(dout, 16);
+		IOHelper.writeShort(dout, outinf.encoding.ID);
+		IOHelper.writeShort(dout, outinf.channelCount);
+		IOHelper.writeInt(dout, outinf.sampleRate);
+		IOHelper.writeInt(dout, outinf.getByteRate());
+		IOHelper.writeShort(dout, outinf.getFrameSize());
+		IOHelper.writeShort(dout, outinf.sampleDepth);
+		IOHelper.writeString(dout, "data", "ISO-8859-1");
+		IOHelper.writeInt(dout, s);
+		return outinf;
 	}
 
 	public static void inflate(File fin, File fout) throws ApplicationException, IOException {
@@ -81,91 +158,27 @@ public final class Inflator {
 		try (
 			InputStream in = new BufferedInputStream(new FileInputStream(fin));
 			DataInputStream din = new DataInputStream(in);
-			FileOutputStream fsout = new FileOutputStream(fout);
-			OutputStream out = new BufferedOutputStream(fsout);
-			DataOutputStream dout = new DataOutputStream(out);
-			FileLock lck = fsout.getChannel().tryLock();
 		) {
-			if (lck == null)
-				throw new AccessDeniedException("File already in use.");
-			System.err.println("Processing header...");
-			int pos = 0;
-			{
-				String tag = IOHelper.readString(din, "ISO-8859-1", 4);
-				if (!tag.equals(WaveInfo.HEADER_MAGIC))
-					throw new ApplicationException(-2, "Unrecognized file header: " + tag);
-				if (8 + IOHelper.readInt(din) != fin.length())
-					System.err.println("Warning: File size may be incorrect.");
-				tag = IOHelper.readString(din, "ISO-8859-1", 4);
-				if (!tag.equals(WaveInfo.HEADER_TYPE))
-					throw new ApplicationException(-2, "Unrecognized file type: " + tag);
-				pos += 12;
-			}
-			WaveInfo ininf = null;
-L:			while (true) {
-				String tag = IOHelper.readString(din, "ISO-8859-1", 4);
-				int s = IOHelper.readInt(din);
-				switch (tag) {
-				case "fmt ": {
-					if (!(s == 16 || s >= 18))
-						throw new ApplicationException(-2, "Invalid header size: " + s);
-					ininf = new WaveInfo();
-					ininf.encoding = WaveInfo.Encoding.get(IOHelper.readShort(din));
-					ininf.channelCount = IOHelper.readShortU(din);
-					ininf.sampleRate = IOHelper.readInt(din);
-					IOHelper.readInt(din);
-					int fs = IOHelper.readShortU(din);
-					ininf.sampleDepth = IOHelper.readShortU(din);
-					if (s >= 18) {
-						if (IOHelper.readShortU(din) != s - 18)
-							System.err.println("Warning: Extended header size may be incorrect.");
-						IOHelper.readBytes(din, s - 18);
-					}
-					if (ininf.encoding != WaveInfo.Encoding.PTADPCM)
-						throw new ApplicationException(1, "Unexpected encoding: " + ininf.encoding.name);
-					if (ininf.sampleDepth != 4 && ininf.sampleDepth != 16)
-						throw new ApplicationException(-2, "Invalid sample depth: " + ininf.sampleDepth);
-					if (fs % ininf.channelCount != 0 || fs / ininf.channelCount <= 5)
-						throw new ApplicationException(-2, "Invalid frame size: " + fs);
-					ininf.frameSampleCount = 2 + (fs / ininf.channelCount - 5) * 2;
-					break;
-				}
-				case "data":
-					if (8 + s != fin.length() - pos)
-						System.err.println("Warning: Data size may be incorrect.");
-					ininf.setDataSize(s);
-					pos += 8;
-					break L;
-				default:
-					System.err.println("Warning: Unrecognized tag: " + tag);
-				case "JUNK":
-					if (din.skipBytes(s) != s)
-						throw new EOFException();
-				}
-				pos += 8 + s;
-			}
+			System.err.println("Preparing header...");
+			WaveInfo ininf = prepareInputInfo(din, (int) fin.length());
 			WaveInfo outinf;
-			{
-				outinf = new WaveInfo(ininf.channelCount, ininf.sampleRate, 16);
-				outinf.sampleCount = ininf.sampleCount;
-				int s = outinf.getDataSize();
-				IOHelper.writeString(dout, WaveInfo.HEADER_MAGIC, "ISO-8859-1");
-				IOHelper.writeInt(dout, 4 + (8 + 16) + 8 + s);
-				IOHelper.writeString(dout, WaveInfo.HEADER_TYPE, "ISO-8859-1");
-				IOHelper.writeString(dout, "fmt ", "ISO-8859-1");
-				IOHelper.writeInt(dout, 16);
-				IOHelper.writeShort(dout, outinf.encoding.ID);
-				IOHelper.writeShort(dout, outinf.channelCount);
-				IOHelper.writeInt(dout, outinf.sampleRate);
-				IOHelper.writeInt(dout, outinf.getByteRate());
-				IOHelper.writeShort(dout, outinf.getFrameSize());
-				IOHelper.writeShort(dout, outinf.sampleDepth);
-				IOHelper.writeString(dout, "data", "ISO-8859-1");
-				IOHelper.writeInt(dout, s);
+			try (
+				FileOutputStream fsout = new FileOutputStream(fout);
+				OutputStream out = new BufferedOutputStream(fsout);
+				DataOutputStream dout = new DataOutputStream(out);
+				FileLock lck = fsout.getChannel().tryLock();
+			) {
+				if (lck == null)
+					throw new AccessDeniedException("File already in use.");
+				outinf = prepareOutputInfo(dout, ininf);
+				System.err.println("Decoding data...");
+				PtADPCMDecoder.decodeData(ininf, din, dout);
+			} catch (FileNotFoundException ex) {
+				throw new ApplicationException(2, "Cannot open output file.");
 			}
-			System.err.println("Decoding data...");
-			PtADPCMInflator.processData(ininf, din, dout);
-			System.err.println("Process complete.");
+			System.err.println("Inflation complete.");
+			System.err.printf("Output length: %.3fs, %dch, %dHz, %dkbps%n",
+				outinf.getLength(), outinf.channelCount, outinf.sampleRate, outinf.getByteRate() * 8 / 1000);
 		} catch (FileNotFoundException ex) {
 			throw new ApplicationException(2, "File does not exist.");
 		}
