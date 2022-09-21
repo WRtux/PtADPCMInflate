@@ -42,7 +42,6 @@ public final class Inflator {
 
 		static final void decodeData(WaveInfo ininf, DataInput din, DataOutput dout) throws IOException {
 			int fcnt = ininf.getFrameCount(), fs = ininf.getFrameSize() / ininf.channelCount;
-			boolean f = false;
 			for (int i = 0; i < fcnt; i++) {
 				int[][] sbuf = new int[ininf.channelCount][ininf.frameSampleCount];
 				for (int j = 0; j < ininf.channelCount; j++) {
@@ -51,18 +50,15 @@ public final class Inflator {
 					int cur = IOHelper.readByteU(din);
 					byte[] buf = IOHelper.readBytes(din, fs - 5);
 					for (int k = 2; k < ininf.frameSampleCount; k++) {
-						int l = (buf[(k - 2) / 2] >>> k % 2 * 4) & 0xF;
-						sbuf[j][k] = (sbuf[j][k - 1] * 2 - sbuf[j][k - 2]) + SAMPLE_VAR_TABLE[cur][l];
-						cur = Math.min(Math.max(cur + INDEX_VAR_LIST[l], 0), INDEX_COUNT - 1);
-						if (!f && (sbuf[j][k] < -0x8000 || sbuf[j][k] > 0x7FFF)) {
-							f = true;
-							System.err.println("Warning: Sample clipping occurred.");
-						}
+						int d = (buf[(k - 2) / 2] >>> k % 2 * 4) & 0xF;
+						int lvl = (sbuf[j][k - 1] * 2 - sbuf[j][k - 2]) + SAMPLE_VAR_TABLE[cur][d];
+						sbuf[j][k] = Math.min(Math.max(lvl, -0x8000), 0x7FFF);
+						cur = Math.min(Math.max(cur + INDEX_VAR_LIST[d], 0), INDEX_COUNT - 1);
 					}
 				}
 				for (int j = 0; j < ininf.frameSampleCount; j++) {
 					for (int k = 0; k < ininf.channelCount; k++) {
-						IOHelper.writeShort(dout, Math.min(Math.max(sbuf[k][j], -0x8000), 0x7FFF));
+						IOHelper.writeShort(dout, sbuf[k][j]);
 					}
 				}
 			}
